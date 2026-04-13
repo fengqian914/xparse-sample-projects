@@ -6,11 +6,33 @@
 
 | 目录 | 项目名称 | 说明 |
 |------|---------|------|
+| [`bank-statement-extract/`](./bank-statement-extract/) | 银行流水抽取工具 | 支持 PDF/图片，分批抽取交易明细，含余额连续性校验与 JSON/CSV 导出 |
 | [`invoice-extract/`](./invoice-extract/) | 海外发票抽取工具 | 支持 PDF/Word/图片，自动分类、抽取头部字段与明细行，含规则校验 |
 | [`medical-report-extract/`](./medical-report-extract/) | 医疗报告抽取工具 | 支持扫描件与图片，抽取患者信息、诊断、检查指标、治疗与预后 |
 | [`contract-review/`](./contract-review/) | 合同审查工具 | 条款风险审阅、规范审阅、主体识别，支持导出 Word 报告 |
 | [`tender-doc-parse/`](./tender-doc-parse/) | 招标文件解析工具 | 按 6 大模块并发抽取基础信息、资格要求、评审要求等结构化字段 |
 | [`financial-report-extract/`](./financial-report-extract/) | 财务三大表抽取工具 | 基于规则从财报 PDF 中提取资产负债表、利润表、现金流量表 |
+
+---
+
+## bank-statement-extract · 银行流水抽取工具
+
+面向财务审计、贷款审批、个人记账等场景。上传银行流水 PDF 或图片，OCR 解析完成后立即展示结果页，用户手动点击「AI 抽取」触发结构化提取。长流水表格自动按行数分批并发送给 LLM，各批结果流式追加到交易明细表。提取完成后进行余额连续性校验，支持导出 JSON 和 CSV。
+
+**技术栈**：Python + FastAPI · React + Vite · TextIn 文档解析 · OpenAI 兼容接口
+
+**启动方式**：
+
+```bash
+# 后端
+cd bank-statement-extract/backend
+cp ../.env.example ../.env  # 填入凭证
+pip install -r requirements.txt && python main.py
+
+# 前端
+cd bank-statement-extract/frontend
+npm install && npm run dev   # http://localhost:5173
+```
 
 ---
 
