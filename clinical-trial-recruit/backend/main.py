@@ -30,11 +30,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TEXTIN_APP_ID     = os.getenv("TEXTIN_APP_ID", "")
+TEXTIN_APP_ID = os.getenv("TEXTIN_APP_ID", "")
 TEXTIN_SECRET_CODE = os.getenv("TEXTIN_SECRET_CODE", "")
-OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY", "")
-OPENAI_BASE_URL   = os.getenv("OPENAI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-OPENAI_MODEL      = os.getenv("OPENAI_MODEL", "qwen-plus")
+
+# ── LLM: OpenAI-compatible (fallback) ─────────────────────────────────────────
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "qwen-plus")
+
+# ── LLM: AI Gateway (preferred when AI_GATEWAY_URL is set) ────────────────────
+AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "")
+AI_GATEWAY_TOKEN = os.getenv("AI_GATEWAY_TOKEN", "")
+AI_GATEWAY_UID = os.getenv("AI_GATEWAY_UID", "")
+AI_GATEWAY_PRODUCT = os.getenv("AI_GATEWAY_PRODUCT", "")
+AI_GATEWAY_INTENTION = os.getenv("AI_GATEWAY_INTENTION", "")
+AI_GATEWAY_PROVIDER = os.getenv("AI_GATEWAY_PROVIDER", "ali")
+AI_GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", "qwen-plus")
+AI_GATEWAY_MAX_TOKENS = int(os.getenv("AI_GATEWAY_MAX_TOKENS", "8192"))
 
 TEXTIN_API_URL = "https://api.textin.com/ai/service/v1/pdf_to_markdown"
 TEXTIN_PARAMS  = {
@@ -69,11 +81,49 @@ def _parse_json(text: str) -> Any:
     return {}
 
 
-async def _llm(prompt: str) -> str:
+async def _call_ai_gateway(prompt: str) -> str:
+    if not AI_GATEWAY_TOKEN:
+        raise HTTPException(status_code=500, detail="AI_GATEWAY_TOKEN not configured.")
+    payload = {
+        "model": AI_GATEWAY_MODEL,
+        "provider": AI_GATEWAY_PROVIDER,
+        "version": "",
+        "context": "",
+        "examples": [],
+        "messages": [{"role": "user", "content": prompt, "name": ""}],
+        "stream": False,
+        "base_llm_arguments": {
+            "max_tokens": AI_GATEWAY_MAX_TOKENS,
+            "top_p": 0.8,
+            "top_k": 50,
+            "temperature": 0.1,
+        },
+    }
+    headers = {
+        "Authorization": f"Bearer {AI_GATEWAY_TOKEN}",
+        "AI-Gateway-Uid": AI_GATEWAY_UID,
+        "AI-Gateway-Product-Name": AI_GATEWAY_PRODUCT,
+        "AI-Gateway-Intention-Code": AI_GATEWAY_INTENTION,
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        resp = await client.post(AI_GATEWAY_URL, headers=headers, json=payload)
+    if not resp.is_success:
+        raise HTTPException(status_code=resp.status_code, detail=f"AI Gateway error: {resp.text[:300]}")
+    data = resp.json()
+    if data.get("code") and data["code"] != "Success":
+        raise HTTPException(status_code=502, detail=f"AI Gateway error: {data.get('message', 'unknown')}")
+    try:
+        return data["choices"][0]["text"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail=f"Unexpected AI Gateway response: {exc}")
+
+
+async def _call_openai_compatible(prompt: str) -> str:
     if not OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured.")
     base = OPENAI_BASE_URL.rstrip("/")
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:
         resp = await client.post(
             f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
@@ -82,6 +132,12 @@ async def _llm(prompt: str) -> str:
     if not resp.is_success:
         raise HTTPException(status_code=resp.status_code, detail=f"LLM error: {resp.text[:300]}")
     return resp.json()["choices"][0]["message"]["content"]
+
+
+async def _llm(prompt: str) -> str:
+    if AI_GATEWAY_URL:
+        return await _call_ai_gateway(prompt)
+    return await _call_openai_compatible(prompt)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
