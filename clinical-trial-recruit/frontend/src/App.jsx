@@ -75,7 +75,7 @@ const STATUS = {
 }
 
 const PROCESS_STEPS = [
-  { key: 'parse',   label: '文档解析',  sub: 'TextIn OCR 识别病历内容',          Icon: Stethoscope },
+  { key: 'parse',   label: '文档解析',  sub: 'OCR 识别病历内容',                Icon: Stethoscope },
   { key: 'extract', label: '指标抽取',  sub: 'AI 提取年龄、诊断、检验值等字段',   Icon: FlaskConical },
   { key: 'screen',  label: '标准匹配',  sub: '逐条核查纳入 / 排除标准',          Icon: ClipboardCheck },
 ]
