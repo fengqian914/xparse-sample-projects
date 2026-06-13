@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>合同审查 · 架构图</title>
+<style>
+  :root {
+    --gray-50:#f8fafc; --gray-100:#f1f5f9; --gray-200:#e2e8f0; --gray-300:#cbd5e1;
+    --gray-500:#64748b; --gray-600:#475569; --gray-800:#1e293b; --gray-900:#0f172a;
+    --blue-50:#eff6ff; --blue-200:#bfdbfe; --blue-500:#3b82f6; --blue-600:#2563eb;
+    --green-50:#ecfdf5; --green-200:#a7f3d0; --green-500:#10b981; --green-600:#059669;
+    --amber-50:#fffbeb; --amber-200:#fde68a; --amber-500:#f59e0b; --amber-600:#d97706;
+    --rose-500:#f43f5e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 20px;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(160deg, #f0f9ff 0%, #e0f2fe 50%, #dbeafe 100%);
+    color: var(--gray-900); min-height: 100vh;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 {
+    text-align: center; font-size: 28px; margin: 0 0 8px;
+    background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .subtitle { text-align: center; color: var(--gray-500); margin-bottom: 40px; font-size: 14px; }
+
+  .layer {
+    background: white; border: 1px solid var(--gray-200); border-radius: 18px;
+    padding: 18px 24px; box-shadow: 0 4px 16px rgba(15,23,42,0.04);
+    position: relative;
+  }
+  .layer-title {
+    position: absolute; top: -10px; left: 24px;
+    background: white; padding: 0 10px; font-size: 12px; font-weight: 600;
+    color: var(--gray-500); letter-spacing: .5px;
+  }
+  .layer.user .layer-title  { color: var(--gray-600); }
+  .layer.front .layer-title { color: var(--blue-600); }
+  .layer.back  .layer-title { color: var(--green-600); }
+  .layer.ext   .layer-title { color: var(--amber-600); }
+
+  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: stretch; justify-content: center; }
+  .box {
+    flex: 1 1 220px; min-height: 88px; padding: 14px 16px;
+    border-radius: 12px; background: var(--gray-50); border: 1px solid var(--gray-200);
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .box .name { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  .box .desc { font-size: 12px; color: var(--gray-500); line-height: 1.6; }
+  .box .tag  {
+    display:inline-block; margin-top:8px; padding: 2px 8px; border-radius:999px;
+    font-size:11px; font-weight:600;
+  }
+  .front .box { background: var(--blue-50);  border-color: var(--blue-200); }
+  .front .box .tag { background: var(--blue-200); color: #1e3a8a; }
+  .back  .box { background: var(--green-50); border-color: var(--green-200); }
+  .back  .box .tag { background: var(--green-200); color: #065f46; }
+  .ext   .box { background: var(--amber-50); border-color: var(--amber-200); }
+  .ext   .box .tag { background: var(--amber-200); color: #78350f; }
+
+  /* Arrow between layers */
+  .arrow {
+    text-align: center; margin: 6px 0; position: relative;
+    color: var(--gray-500); font-size: 12px;
+  }
+  .arrow::before {
+    content: ""; display: block; width: 2px; height: 26px;
+    background: linear-gradient(180deg, transparent, var(--gray-300), transparent);
+    margin: 0 auto;
+  }
+  .arrow .label {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: white; padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--gray-200); white-space: nowrap;
+    color: var(--gray-600); font-weight: 500;
+  }
+
+  /* Parallel branch (LLM x2) */
+  .parallel-wrap { display: flex; gap: 24px; }
+  .parallel-wrap .box { flex: 1; }
+  .parallel-badge {
+    display:inline-block; background:#fee2e2; color:#991b1b;
+    padding: 2px 8px; border-radius:999px; font-size:11px; font-weight:700;
+    margin-left: 6px;
+  }
+
+  /* Side notes */
+  .note {
+    background: white; border-left: 3px solid var(--blue-500);
+    padding: 10px 14px; border-radius: 4px; font-size: 12px;
+    color: var(--gray-600); margin-top: 24px; line-height: 1.7;
+  }
+  .note b { color: var(--gray-800); }
+
+  /* Mini badges in layer header */
+  .port {
+    background:#0f172a; color:white; padding: 1px 8px; border-radius:6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>合同审查 · 系统架构</h1>
+  <p class="subtitle">Contract Review · 单文件 / 单租户 / 双 LLM 并发</p>
+
+  <!-- 用户层 -->
+  <div class="layer user">
+    <div class="layer-title">USER</div>
+    <div class="row">
+      <div class="box" style="flex:0 1 320px;">
+        <div class="name">浏览器（用户）</div>
+        <div class="desc">上传 PDF / DOC / DOCX（&le; 50MB）<br>查看条款风险 + 规范性审阅结果</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="label">multipart/form-data &nbsp; · &nbsp; HTTP</span></div>
+
+  <!-- 前端层 -->
+  <div class="layer front">
+    <div class="layer-title">FRONTEND · React + Vite <span class="port">:5173</span></div>
+    <div class="row">
+      <div class="box">
+        <div class="name">UploadPage</div>
+        <div class="desc">拖拽/点选文件 → FormData → /api/parse</div>
+        <span class="tag">file → backend</span>
+      </div>
+      <div class="box">
+        <div class="name">LoadingPage</div>
+        <div class="desc">OCR 进度 + 跳转结果页</div>
+        <span class="tag">UI 状态机</span>
+      </div>
+      <div class="box">
+        <div class="name">ResultsPage</div>
+        <div class="desc">条款风险面板 + 规范审阅面板（独立 loading）</div>
+        <span class="tag">渲染 + 导出 Word</span>
+      </div>
+    </div>
+    <div class="row" style="margin-top: 12px;">
+      <div class="box" style="background:white;border-style:dashed;">
+        <div class="name">prompts/index.js</div>
+        <div class="desc">CLAUSE_PROMPT（条款风险）+ NORM_PROMPT（规范性）</div>
+        <span class="tag">prompt 静态常量</span>
+      </div>
+      <div class="box" style="background:white;border-style:dashed;">
+        <div class="name">api/textin.js · api/llm.js</div>
+        <div class="desc">parseDocumentWithTextIn() · callLLM() · parseLLMJson()</div>
+        <span class="tag">网络封装</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="label">Vite proxy &nbsp; · &nbsp; /api/* → :8000</span></div>
+
+  <!-- 后端层 -->
+  <div class="layer back">
+    <div class="layer-title">BACKEND · FastAPI <span class="port">:8000</span></div>
+    <div class="row">
+      <div class="box">
+        <div class="name">POST /api/parse</div>
+        <div class="desc">接收上传文件 → TextIn 官方 API → 返回 markdown + pages</div>
+        <span class="tag">OCR 网关</span>
+      </div>
+      <div class="box">
+        <div class="name">POST /api/extract</div>
+        <div class="desc">prompt + markdown → 路由 LLM → JSON 解析兜底</div>
+        <span class="tag">LLM 路由</span>
+      </div>
+      <div class="box">
+        <div class="name">GET /api/image</div>
+        <div class="desc">代理 TextIn 页面图（带鉴权）</div>
+        <span class="tag">图片代理</span>
+      </div>
+    </div>
+    <div class="row" style="margin-top: 12px;">
+      <div class="box" style="background:white;border-style:dashed;">
+        <div class="name">_call_ai_gateway()</div>
+        <div class="desc">AI_GATEWAY_URL 已配置时走这里</div>
+        <span class="tag">优先</span>
+      </div>
+      <div class="box" style="background:white;border-style:dashed;">
+        <div class="name">_call_openai_compatible()</div>
+        <div class="desc">回退到 OpenAI 兼容协议（DashScope / OpenAI / DeepSeek …）</div>
+        <span class="tag">回退</span>
+      </div>
+      <div class="box" style="background:white;border-style:dashed;">
+        <div class="name">_parse_json_from_text()</div>
+        <div class="desc">剥 ```json``` → JSON.parse → 正则兜底</div>
+        <span class="tag">容错解析</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="label">HTTPS · 三个出站调用并行</span></div>
+
+  <!-- 外部服务层 -->
+  <div class="layer ext">
+    <div class="layer-title">EXTERNAL SERVICES</div>
+    <div class="row">
+      <div class="box" style="flex:0 1 280px;">
+        <div class="name">TextIn API</div>
+        <div class="desc">pdf_to_markdown<br>page_details · 文档树 · 表格 HTML</div>
+        <span class="tag">OCR / 版面解析</span>
+      </div>
+      <div class="parallel-wrap" style="flex:1;">
+        <div class="box">
+          <div class="name">LLM #1 — 条款风险<span class="parallel-badge">并发</span></div>
+          <div class="desc">CLAUSE_PROMPT<br>5 类风险 + 甲乙方</div>
+          <span class="tag">qwen-plus</span>
+        </div>
+        <div class="box">
+          <div class="name">LLM #2 — 规范审阅<span class="parallel-badge">并发</span></div>
+          <div class="desc">NORM_PROMPT<br>错漏 / 一致性 / 格式 / 修订</div>
+          <span class="tag">qwen-plus</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>关键流程：</b>
+    用户上传 → 后端转发 TextIn 拿到 markdown → 前端跳转 ResultsPage → 同时发起两次
+    <code>callLLM()</code>（CLAUSE + NORM）<b>并发</b> →
+    每条独立 loading / error / result，谁先回来谁先展示。<br><br>
+    <b>无需说明：</b> 文件不持久化（不走对象存储）；prompt 是写死在前端 JS 常量里；
+    LLM 路径在 <code>.env</code> 切换（AI Gateway 优先 / OpenAI 兼容回退）。
+  </div>
+
+</div>
+</body>
+</html>
