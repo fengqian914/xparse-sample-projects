@@ -126,7 +126,12 @@ function PassIcon({ pass, size = 15 }) {
   return <HelpCircle size={size} className="text-amber-400 flex-shrink-0" />
 }
 
-function PassPill({ pass }) {
+function PassPill({ pass, type }) {
+  if (type === 'exclusion') {
+    if (pass === true)  return <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">未触发</span>
+    if (pass === false) return <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 font-medium">触发排除</span>
+    return <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-medium">待确认</span>
+  }
   if (pass === true)  return <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">符合</span>
   if (pass === false) return <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 font-medium">不符合</span>
   return <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-medium">待确认</span>
@@ -151,7 +156,7 @@ function CriterionRow({ criterion, check, type }) {
         </span>
         <span className="flex-1 text-sm text-slate-700">{criterion.text}</span>
         <div className="flex items-center gap-2 flex-shrink-0">
-          {hasCheck && <PassPill pass={check.pass} />}
+          {hasCheck && <PassPill pass={check.pass} type={type} />}
           {hasCheck && (
             open
               ? <ChevronDown size={13} className="text-slate-400" />
@@ -256,9 +261,9 @@ function ResultView({ result, onReset }) {
           </div>
         ))}
         <div className="ml-auto flex items-center gap-3 text-xs text-slate-400">
-          <span className="flex items-center gap-1"><CheckCircle size={12} className="text-emerald-500" /> {passCount} 项符合</span>
+          <span className="flex items-center gap-1"><CheckCircle size={12} className="text-emerald-500" /> {passCount} 项通过</span>
           {uncertainCount > 0 && <span className="flex items-center gap-1"><HelpCircle size={12} className="text-amber-400" /> {uncertainCount} 项待确认</span>}
-          {failCount > 0 && <span className="flex items-center gap-1"><XCircle size={12} className="text-red-500" /> {failCount} 项不符合</span>}
+          {failCount > 0 && <span className="flex items-center gap-1"><XCircle size={12} className="text-red-500" /> {failCount} 项未通过</span>}
         </div>
       </div>
 

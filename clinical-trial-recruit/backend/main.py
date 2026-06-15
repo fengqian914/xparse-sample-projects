@@ -232,9 +232,15 @@ async def screen_patient(req: ScreenRequest):
 }}
 
 重要规则：
-- 排除标准（EXCLUSION）命中（即 pass=false）表示该患者触发了排除条件
+- 对“纳入标准”，pass=true 表示满足；pass=false 表示不满足
+- 对“排除标准”，pass=true 表示未触发排除条件；pass=false 表示触发排除条件
 - 不得推断或假设档案中未记录的信息，信息缺失时 pass 为 null
 - evidence 必须引用档案中的具体数值或描述
+
+示例（排除标准）：
+- 标准：既往接受过同类靶向治疗
+  - 病历记录存在“使用奥希替尼 8 个月” → pass=false
+  - 病历记录明确“无靶向治疗史” → pass=true
 
 ## 试验标准
 {criteria_text}
