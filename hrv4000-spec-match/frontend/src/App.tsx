@@ -8,6 +8,7 @@ const PDF_URL = '/hrv4000-pbts.pdf';
 
 /** 解释较完整、适合演示的条目置顶，其余按序号 */
 const PINNED_IDS = [8, 10, 13, 14, 15, 18, 19, 27, 35, 66];
+const MAX_SELECT = 3;
 
 const STATUS_LABEL: Record<MatchStatus, string> = {
   pending: '待抽取',
@@ -30,7 +31,8 @@ export default function App() {
   const [busy, setBusy] = useState<'extract' | null>(null);
   const [hint, setHint] = useState('源文件已前置解析。抽取：翻译 query → 召回 chunk → 模型回填绿色列。');
   const [logs, setLogs] = useState<string[]>([]);
-  const [pageNumber, setPageNumber] = useState(1);
+  const [visiblePage, setVisiblePage] = useState(1);
+  const [pageTotal, setPageTotal] = useState(0);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -52,25 +54,42 @@ export default function App() {
       return Number(a.seq) - Number(b.seq);
     });
   }, [items]);
-  const allIds = useMemo(() => items.map((r) => r.id), [items]);
-  const allChecked = items.length > 0 && selected.size === items.length;
+  const headerChecked = selected.size > 0;
 
   function toggle(id: number) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        setError('');
+        return next;
+      }
+      if (next.size >= MAX_SELECT) {
+        setError(`一次最多勾选 ${MAX_SELECT} 行，请先取消部分勾选`);
+        return prev;
+      }
+      setError('');
+      next.add(id);
       return next;
     });
   }
 
   function toggleAll() {
-    setSelected(allChecked ? new Set() : new Set(allIds));
+    if (selected.size > 0) {
+      setSelected(new Set());
+      setError('');
+      return;
+    }
+    setError(`一次最多勾选 ${MAX_SELECT} 行，请逐条勾选`);
   }
 
   async function onExtract() {
     if (selected.size === 0) {
       setError('请先勾选要抽取的行');
+      return;
+    }
+    if (selected.size > MAX_SELECT) {
+      setError(`一次最多勾选 ${MAX_SELECT} 行`);
       return;
     }
     setBusy('extract');
@@ -97,8 +116,6 @@ export default function App() {
           };
         }),
       );
-      const firstPaged = results.find((r) => r.page);
-      if (firstPaged?.page) setPageNumber(firstPaged.page);
       const matched = results.filter((r) => r.matchStatus === 'matched').length;
       const partial = results.filter((r) => r.matchStatus === 'partial').length;
       const unmatched = results.filter((r) => r.matchStatus === 'unmatched').length;
@@ -127,7 +144,9 @@ export default function App() {
             <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 shadow-sm">
               已回填 {filled}
             </span>
-            <span className="rounded-full bg-white px-3 py-1 text-xs font-medium shadow-sm">已选 {selected.size}</span>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-medium shadow-sm">
+              已选 {selected.size}/{MAX_SELECT}
+            </span>
             <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-medium text-white">源文件已前置解析</span>
             <button
               type="button"
@@ -141,7 +160,7 @@ export default function App() {
           </div>
         </div>
         <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-          语料：HRV 4000 PBTS - Conformed 5-22-17（657 页）。右侧为源文件预览；点击已回填行按页码跳转。
+          语料：HRV 4000 PBTS - Conformed 5-22-17（657 页）。右侧为源文件预览。
           建议先勾选少量行。流程：英译条目 → 召回标书 → 模型填写章节 / 原文 / 译文 / 页码。
         </div>
         <p className="mt-2 text-xs text-slate-600">{hint}</p>
@@ -164,7 +183,7 @@ export default function App() {
               <thead className="sticky top-0 z-10 bg-[#1e3a5f] text-white">
                 <tr>
                   <th className="w-8 px-2 py-2">
-                    <input type="checkbox" checked={allChecked} onChange={toggleAll} />
+                    <input type="checkbox" checked={headerChecked} onChange={toggleAll} title={`一次最多 ${MAX_SELECT} 行`} />
                   </th>
                   <th className="px-2 py-2">序号</th>
                   <th className="px-2 py-2">匹配</th>
@@ -185,8 +204,7 @@ export default function App() {
                 {displayItems.map((row, idx) => (
                   <tr
                     key={row.id}
-                    className={`cursor-pointer align-top ${idx % 2 ? 'bg-slate-50' : 'bg-white'} hover:bg-sky-50`}
-                    onClick={() => row.page && setPageNumber(row.page)}
+                    className={`align-top ${idx % 2 ? 'bg-slate-50' : 'bg-white'}`}
                   >
                     <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggle(row.id)} />
@@ -218,10 +236,18 @@ export default function App() {
         <aside className="flex min-h-0 flex-col bg-slate-100">
           <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 text-xs">
             <span className="font-medium text-slate-700">源文件预览</span>
-            <span className="text-slate-500">当前页 {pageNumber} · 点击已回填行可跳转</span>
+            <span className="text-slate-500">
+              {pageTotal > 0 ? `当前页 ${visiblePage} / ${pageTotal}` : '当前页 —'}
+            </span>
           </div>
           <div className="min-h-0 flex-1">
-            <PdfViewer fileUrl={PDF_URL} pageNumber={pageNumber} />
+            <PdfViewer
+              fileUrl={PDF_URL}
+              onVisiblePage={(page, total) => {
+                setVisiblePage(page);
+                setPageTotal(total);
+              }}
+            />
           </div>
         </aside>
       </div>

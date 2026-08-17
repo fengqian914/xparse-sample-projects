@@ -46,7 +46,7 @@ EXTRACT_PROMPT = """根据召回 chunk，为每条基准需求判定匹配并回
 - srcDesc：客户原始描述。摘录能支撑该条目的英文原句，可并列多出处，不要改写成作文；数字/标准号不改
 - zhChapter：srcChapter 的中文翻译，章节编号保持英文/数字原样
 - zhDesc：srcDesc 的中文翻译，数字/标准号不改
-- page：最相关一处的页码，必须来自该 chunk 的 page；没有则 null
+- page：必须填写最相关出处的页码（整数）。优先用 chunk.page；若为 null，从正文页脚/页眉提取，如 PAGE 22-26 取 26，p.4 取 4。matched/partial 时尽量给出页码，不要留空
 - unmatched 时 srcChapter、srcDesc、zhChapter、zhDesc 必须为空字符串，page 必须为 null，禁止编造
 
 输出 JSON 数组，每项字段：id, matchStatus, srcChapter, srcDesc, zhChapter, zhDesc, page
@@ -220,4 +220,14 @@ async def extract_from_chunks(jobs: list[dict[str, Any]]) -> list[dict[str, Any]
             "page": page,
         }
         by_id[rid] = _empty_extract(rid) if status == "unmatched" else result
-    return [by_id.get(job["id"], _empty_extract(job["id"])) for job in jobs]
+    out = []
+    for job in jobs:
+        result = by_id.get(job["id"], _empty_extract(job["id"]))
+        if result["matchStatus"] != "unmatched" and not result.get("page"):
+            for chunk in job.get("chunks") or []:
+                page = _as_int(chunk.get("page")) if isinstance(chunk, dict) else None
+                if page and page > 0:
+                    result["page"] = page
+                    break
+        out.append(result)
+    return out

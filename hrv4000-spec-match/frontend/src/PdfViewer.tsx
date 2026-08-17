@@ -17,14 +17,16 @@ const options = {
 
 interface PdfViewerProps {
   fileUrl: string;
-  pageNumber: number;
+  onVisiblePage?: (page: number, total: number) => void;
 }
 
-export default function PdfViewer({ fileUrl, pageNumber }: PdfViewerProps) {
+export default function PdfViewer({ fileUrl, onVisiblePage }: PdfViewerProps) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState<number>();
+  const onVisiblePageRef = useRef(onVisiblePage);
+  onVisiblePageRef.current = onVisiblePage;
 
   const onResize = useCallback(() => {
     if (containerRef.current) {
@@ -39,10 +41,36 @@ export default function PdfViewer({ fileUrl, pageNumber }: PdfViewerProps) {
   }, [onResize]);
 
   useEffect(() => {
-    if (pageNumber > 0 && pageRefs.current[pageNumber - 1]) {
-      pageRefs.current[pageNumber - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, [pageNumber, numPages]);
+    const root = containerRef.current;
+    if (!root || !numPages) return;
+
+    const visible = new Map<number, number>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const page = Number((entry.target as HTMLElement).dataset.page);
+          if (!page) continue;
+          if (entry.isIntersecting) visible.set(page, entry.intersectionRatio);
+          else visible.delete(page);
+        }
+        let best = 1;
+        let ratio = -1;
+        for (const [page, r] of visible) {
+          if (r > ratio) {
+            ratio = r;
+            best = page;
+          }
+        }
+        if (visible.size > 0) onVisiblePageRef.current?.(best, numPages);
+      },
+      { root, threshold: [0.15, 0.35, 0.55, 0.75] },
+    );
+
+    pageRefs.current.forEach((el) => {
+      if (el) io.observe(el);
+    });
+    return () => io.disconnect();
+  }, [numPages]);
 
   return (
     <div ref={containerRef} className="h-full w-full overflow-y-auto bg-slate-200/70">
@@ -51,6 +79,7 @@ export default function PdfViewer({ fileUrl, pageNumber }: PdfViewerProps) {
         onLoadSuccess={({ numPages: n }) => {
           setNumPages(n);
           pageRefs.current = Array(n).fill(null);
+          onVisiblePageRef.current?.(1, n);
         }}
         options={options}
         loading={
@@ -66,6 +95,7 @@ export default function PdfViewer({ fileUrl, pageNumber }: PdfViewerProps) {
           return (
             <div
               key={currentPage}
+              data-page={currentPage}
               ref={(el) => {
                 pageRefs.current[index] = el;
               }}

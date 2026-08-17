@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -42,27 +43,45 @@ def _chunk_title(chunk: dict[str, Any]) -> str:
     return _first_str(chunk, ("title_path", "title", "heading", "section", "chapter", "path"))
 
 
+_PAGE_IN_TEXT = re.compile(
+    r"(?:PAGE|Page|page|p\.|P\.)\s*(\d{1,4})(?:\s*[-–]\s*(\d{1,4}))?",
+    re.I,
+)
+
+
+def _page_from_text(text: str) -> int | None:
+    last = None
+    for match in _PAGE_IN_TEXT.finditer(text or ""):
+        last = int(match.group(2) or match.group(1))
+    return last if last and last > 0 else None
+
+
+def _int_page(value: Any, plus_one: bool = False) -> int | None:
+    try:
+        page = int(value)
+    except (TypeError, ValueError):
+        return None
+    if plus_one:
+        page = page + 1 if page >= 0 else 0
+    return page if page > 0 else None
+
+
 def _chunk_page(chunk: dict[str, Any]) -> int | None:
-    for key in ("page_num", "page", "pageNumber", "page_no", "page_id"):
-        val = chunk.get(key)
-        if val is None:
-            continue
-        try:
-            page = int(val)
-        except (TypeError, ValueError):
-            continue
-        if key == "page_id":
-            page = page + 1 if page >= 0 else 0
-        if page > 0:
-            return page
-    pages = chunk.get("pages")
-    if isinstance(pages, list) and pages:
-        try:
-            page = int(pages[0])
-            return page if page > 0 else None
-        except (TypeError, ValueError):
-            return None
-    return None
+    sources = [chunk]
+    meta = chunk.get("meta") or chunk.get("metadata")
+    if isinstance(meta, dict) and meta:
+        sources.append(meta)
+    for src in sources:
+        for key in ("page_num", "page", "pageNumber", "page_no", "page_id", "pageIndex"):
+            page = _int_page(src.get(key), plus_one=key in ("page_id", "pageIndex"))
+            if page:
+                return page
+        pages = src.get("pages")
+        if isinstance(pages, list) and pages:
+            page = _int_page(pages[0])
+            if page:
+                return page
+    return _page_from_text(_chunk_text(chunk))
 
 
 def _field_groups(payload: Any) -> list[dict[str, Any]]:
