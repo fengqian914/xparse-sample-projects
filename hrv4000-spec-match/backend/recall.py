@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-import re
 from typing import Any
 
 import httpx
@@ -19,6 +19,7 @@ RECALL_TOP_K = int(os.getenv("RECALL_TOP_K", "3"))
 RECALL_APP_ID = os.getenv("RECALL_APP_ID", "contract_data")
 RECALL_WIKI_BRANCH = os.getenv("RECALL_WIKI_BRANCH", "func")
 WPS_SID = os.getenv("WPS_SID", "")
+RECALL_MIN_SCORE = float(os.getenv("RECALL_MIN_SCORE", "0.4"))
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -43,45 +44,35 @@ def _chunk_title(chunk: dict[str, Any]) -> str:
     return _first_str(chunk, ("title_path", "title", "heading", "section", "chapter", "path"))
 
 
-_PAGE_IN_TEXT = re.compile(
-    r"(?:PAGE|Page|page|p\.|P\.)\s*(\d{1,4})(?:\s*[-–]\s*(\d{1,4}))?",
-    re.I,
-)
-
-
-def _page_from_text(text: str) -> int | None:
-    last = None
-    for match in _PAGE_IN_TEXT.finditer(text or ""):
-        last = int(match.group(2) or match.group(1))
-    return last if last and last > 0 else None
-
-
-def _int_page(value: Any, plus_one: bool = False) -> int | None:
+def _int_page(value: Any) -> int | None:
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else None
     try:
         page = int(value)
     except (TypeError, ValueError):
         return None
-    if plus_one:
-        page = page + 1 if page >= 0 else 0
     return page if page > 0 else None
 
 
 def _chunk_page(chunk: dict[str, Any]) -> int | None:
-    sources = [chunk]
+    """只信召回 page_num，例如 [642]。"""
+    page = _int_page(chunk.get("page_num"))
+    if page:
+        return page
     meta = chunk.get("meta") or chunk.get("metadata")
-    if isinstance(meta, dict) and meta:
-        sources.append(meta)
-    for src in sources:
-        for key in ("page_num", "page", "pageNumber", "page_no", "page_id", "pageIndex"):
-            page = _int_page(src.get(key), plus_one=key in ("page_id", "pageIndex"))
-            if page:
-                return page
-        pages = src.get("pages")
-        if isinstance(pages, list) and pages:
-            page = _int_page(pages[0])
-            if page:
-                return page
-    return _page_from_text(_chunk_text(chunk))
+    if isinstance(meta, dict):
+        return _int_page(meta.get("page_num"))
+    return None
+
+
+def _chunk_score(chunk: dict[str, Any]) -> float | None:
+    val = chunk.get("score")
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
 
 
 def _field_groups(payload: Any) -> list[dict[str, Any]]:
@@ -109,12 +100,23 @@ def _chunks_of(group: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def serialize_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """压成 LLM 输入：title / page / content。"""
+    """压成 title / page(page_num) / score / content；丢掉低于阈值的 chunk。"""
     out = []
     for chunk in chunks:
         text = _chunk_text(chunk)
-        if text:
-            out.append({"title": _chunk_title(chunk), "page": _chunk_page(chunk), "content": text})
+        if not text:
+            continue
+        score = _chunk_score(chunk)
+        if score is not None and score < RECALL_MIN_SCORE:
+            continue
+        out.append(
+            {
+                "title": _chunk_title(chunk),
+                "page": _chunk_page(chunk),
+                "score": score,
+                "content": text,
+            }
+        )
     return out
 
 
@@ -170,12 +172,17 @@ async def recall_chunks(fields: list[dict[str, str]]) -> dict[str, Any]:
 
 
 async def recall_by_fields(fields: list[dict[str, str]]) -> dict[str, list[dict[str, Any]]]:
-    """与可用 curl 一致：每次只召回一个 field，避免扁平 data 无法按 name 分组。"""
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for field in fields:
+    """每个 field 单独请求，并发召回。"""
+
+    async def one(field: dict[str, str]) -> tuple[str, list[dict[str, Any]]]:
         name = field["name"]
         payload = await recall_chunks([{"name": name, "desc": field.get("desc") or ""}])
         parsed = parse_recall_groups(payload, [name])
-        grouped[name] = parsed.get(name) or parsed.get("_") or []
-        logger.info("字段 %s 解析到 %s 个 chunk", name, len(grouped[name]))
-    return grouped
+        chunks = parsed.get(name) or parsed.get("_") or []
+        logger.info("字段 %s 解析到 %s 个 chunk", name, len(chunks))
+        return name, chunks
+
+    if not fields:
+        return {}
+    pairs = await asyncio.gather(*[one(field) for field in fields])
+    return dict(pairs)

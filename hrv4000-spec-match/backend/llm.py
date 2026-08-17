@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from pdf_chapter import chapter_at, zh_chapter
+
 logger = logging.getLogger("hrv.llm")
 
 AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "http://ai-gateway.wps.cn/api/v2/llm/chat")
@@ -42,14 +44,13 @@ EXTRACT_PROMPT = """根据召回 chunk，为每条基准需求判定匹配并回
 - unmatched：标书未写该基准项
 
 回填规则：
-- srcChapter：客户原始章节编号与名称（英文）。从 chunk 的 title 或正文标题摘取，编号不改。多出处用换行并列，不要合成一句
-- srcDesc：客户原始描述。摘录能支撑该条目的英文原句，可并列多出处，不要改写成作文；数字/标准号不改
-- zhChapter：srcChapter 的中文翻译，章节编号保持英文/数字原样
+- srcDesc：客户原始描述。必须从某个 chunk.content 原文摘录，不要改写、不要拼接未出现的句子；数字/标准号不改
+- chunkIds：srcDesc 用到的 chunk.i，按摘录主次排列。只用了哪几条就填哪几条
 - zhDesc：srcDesc 的中文翻译，数字/标准号不改
-- page：必须填写最相关出处的页码（整数）。优先用 chunk.page；若为 null，从正文页脚/页眉提取，如 PAGE 22-26 取 26，p.4 取 4。matched/partial 时尽量给出页码，不要留空
-- unmatched 时 srcChapter、srcDesc、zhChapter、zhDesc 必须为空字符串，page 必须为 null，禁止编造
+- srcChapter、zhChapter、page：不要填，服务按所用 chunk 的页从源文件页眉/小节号回填
+- unmatched 时 srcDesc、zhDesc 必须为空字符串，chunkIds 必须为 []，禁止编造
 
-输出 JSON 数组，每项字段：id, matchStatus, srcChapter, srcDesc, zhChapter, zhDesc, page
+输出 JSON 数组，每项字段：id, matchStatus, srcDesc, zhDesc, chunkIds
 
 输入如下：
 """
@@ -171,7 +172,7 @@ async def translate_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
     return results
 
 
-def _empty_extract(item_id: int) -> dict[str, Any]:
+def empty_extract(item_id: int) -> dict[str, Any]:
     return {
         "id": item_id,
         "matchStatus": "unmatched",
@@ -183,8 +184,79 @@ def _empty_extract(item_id: int) -> dict[str, Any]:
     }
 
 
-async def extract_from_chunks(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """根据召回 chunk 回填绿色列。jobs 含 id/name/desc/name_en/desc_en/chunks。"""
+def _chunk_page(chunk: dict[str, Any]) -> int | None:
+    page = _as_int(chunk.get("page"))
+    return page if page and page > 0 else None
+
+
+def _norm_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _parse_chunk_ids(raw: Any, n: int) -> list[int]:
+    if raw is None:
+        return []
+    values = raw if isinstance(raw, list) else [raw]
+    out: list[int] = []
+    for val in values:
+        idx = _as_int(val)
+        if idx is None or idx < 0 or idx >= n or idx in out:
+            continue
+        out.append(idx)
+    return out
+
+
+def _chunks_for_quote(chunks: list[dict[str, Any]], quote: str) -> list[dict[str, Any]]:
+    """模型没回 chunkIds 时，用摘录和 chunk 正文重叠找来源。"""
+    q = _norm_text(quote)
+    if not q:
+        return []
+    scored: list[tuple[int, dict[str, Any]]] = []
+    q_tokens = set(q.split())
+    for chunk in chunks:
+        body = _norm_text(str(chunk.get("content") or ""))
+        if not body:
+            continue
+        if q in body or body in q:
+            scored.append((10_000 + len(body), chunk))
+            continue
+        overlap = len(q_tokens & set(body.split()))
+        if overlap >= 6:
+            scored.append((overlap, chunk))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:2]]
+
+
+def _used_chunks(
+    chunks: list[dict[str, Any]],
+    chunk_ids: list[int],
+    quote: str,
+) -> list[dict[str, Any]]:
+    by_i = {int(c["i"]): c for c in chunks if c.get("i") is not None}
+    used = [by_i[i] for i in chunk_ids if i in by_i]
+    return used or _chunks_for_quote(chunks, quote)
+
+
+def _numbered_chunks(raw_chunks: list[Any]) -> list[dict[str, Any]]:
+    numbered = []
+    for chunk in raw_chunks:
+        if not isinstance(chunk, dict):
+            continue
+        numbered.append(
+            {
+                "i": len(numbered),
+                "title": chunk.get("title") or "",
+                "page": chunk.get("page"),
+                "score": chunk.get("score"),
+                "content": chunk.get("content") or "",
+            }
+        )
+    return numbered
+
+
+async def extract_one_job(job: dict[str, Any]) -> dict[str, Any]:
+    """单行回填。页码取 srcDesc 所用 chunk 的召回 page。"""
+    chunks = _numbered_chunks(job.get("chunks") or [])
     payload = [
         {
             "id": job["id"],
@@ -192,42 +264,34 @@ async def extract_from_chunks(jobs: list[dict[str, Any]]) -> list[dict[str, Any]
             "desc": job.get("desc") or "",
             "name_en": job.get("name_en") or "",
             "desc_en": job.get("desc_en") or "",
-            "chunks": job.get("chunks") or [],
+            "chunks": chunks,
         }
-        for job in jobs
     ]
     raw = await chat(EXTRACT_PROMPT + json.dumps(payload, ensure_ascii=False), context=EXTRACT_CONTEXT)
-    by_id: dict[int, dict[str, Any]] = {}
-    for row in _parse_json_array(raw):
-        if not isinstance(row, dict):
-            continue
-        rid = _as_int(row.get("id"))
-        if rid is None:
-            continue
-        status = str(row.get("matchStatus") or row.get("match_status") or "").strip().lower()
-        if status not in ("matched", "partial", "unmatched"):
-            status = "unmatched"
-        page = _as_int(row.get("page"))
-        if page is not None and page <= 0:
-            page = None
-        result = {
-            "id": rid,
-            "matchStatus": status,
-            "srcChapter": str(row.get("srcChapter") or "").strip(),
-            "srcDesc": str(row.get("srcDesc") or "").strip(),
-            "zhChapter": str(row.get("zhChapter") or "").strip(),
-            "zhDesc": str(row.get("zhDesc") or "").strip(),
-            "page": page,
-        }
-        by_id[rid] = _empty_extract(rid) if status == "unmatched" else result
-    out = []
-    for job in jobs:
-        result = by_id.get(job["id"], _empty_extract(job["id"]))
-        if result["matchStatus"] != "unmatched" and not result.get("page"):
-            for chunk in job.get("chunks") or []:
-                page = _as_int(chunk.get("page")) if isinstance(chunk, dict) else None
-                if page and page > 0:
-                    result["page"] = page
-                    break
-        out.append(result)
-    return out
+    parsed = _parse_json_array(raw)
+    row = next((x for x in parsed if isinstance(x, dict) and _as_int(x.get("id")) == job["id"]), None)
+    if not row and parsed and isinstance(parsed[0], dict):
+        row = parsed[0]
+    if not row:
+        return empty_extract(job["id"])
+    status = str(row.get("matchStatus") or row.get("match_status") or "").strip().lower()
+    if status not in ("matched", "partial", "unmatched"):
+        status = "unmatched"
+    if status == "unmatched":
+        return empty_extract(job["id"])
+    src_desc = str(row.get("srcDesc") or "").strip()
+    chunk_ids = _parse_chunk_ids(row.get("chunkIds") or row.get("chunk_ids"), len(chunks))
+    used = _used_chunks(chunks, chunk_ids, src_desc)
+    recall_page = next((p for c in used if (p := _chunk_page(c))), None)
+    file_page = recall_page + 1 if recall_page else None
+    chunk_text = "\n".join(str(c.get("content") or "") for c in used)
+    src_chapter = chapter_at(file_page or 0, src_desc, chunk_text) if file_page else ""
+    return {
+        "id": job["id"],
+        "matchStatus": status,
+        "srcChapter": src_chapter,
+        "srcDesc": src_desc,
+        "zhChapter": zh_chapter(src_chapter),
+        "zhDesc": str(row.get("zhDesc") or "").strip(),
+        "page": file_page,
+    }

@@ -10,6 +10,7 @@ export async function fetchItems(): Promise<RequirementItem[]> {
 export async function extractItems(
   itemIds: number[],
   onLog: (message: string) => void,
+  onRow?: (result: ExtractResult) => void,
 ): Promise<ExtractResult[]> {
   const res = await fetch('/api/extract', {
     method: 'POST',
@@ -35,6 +36,7 @@ export async function extractItems(
       if (!line) continue;
       const event = JSON.parse(line.slice(6));
       if (event.type === 'log') onLog(event.message);
+      if (event.type === 'row' && event.result) onRow?.(event.result);
       if (event.type === 'done') results = event.results;
       if (event.type === 'error') error = event.message;
     }

@@ -76,9 +76,12 @@ async def extract_items(body: ExtractRequest):
         async def emit(message: str) -> None:
             await queue.put({"type": "log", "message": message})
 
+        async def on_row(result: dict[str, Any]) -> None:
+            await queue.put({"type": "row", "result": result})
+
         async def run() -> None:
             try:
-                result = await extract_selected(selected, emit=emit)
+                result = await extract_selected(selected, emit=emit, on_row=on_row)
                 await queue.put({"type": "done", "results": result["results"]})
             except Exception as exc:
                 await queue.put({"type": "error", "message": str(exc)})

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import PdfViewer from './PdfViewer';
 import { extractItems, fetchItems } from './api';
-import type { MatchStatus, RequirementItem } from './types';
+import type { ExtractResult, MatchStatus, RequirementItem } from './types';
 
 const PDF_URL = '/hrv4000-pbts.pdf';
 
@@ -33,6 +33,8 @@ export default function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [visiblePage, setVisiblePage] = useState(1);
   const [pageTotal, setPageTotal] = useState(0);
+  const [jumpToPage, setJumpToPage] = useState<number | null>(null);
+  const [jumpNonce, setJumpNonce] = useState(0);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -96,26 +98,32 @@ export default function App() {
     setError('');
     setLogs([]);
     try {
-      const results = await extractItems([...selected], (message) => {
-        setLogs((prev) => [...prev, message]);
-        setHint(message);
-      });
-      const map = new Map(results.map((r) => [r.id, r]));
-      setItems((prev) =>
-        prev.map((row) => {
-          const hit = map.get(row.id);
-          if (!hit) return row;
-          return {
-            ...row,
-            srcChapter: hit.srcChapter,
-            srcDesc: hit.srcDesc,
-            zhChapter: hit.zhChapter,
-            zhDesc: hit.zhDesc,
-            page: hit.page,
-            matchStatus: hit.matchStatus,
-          };
-        }),
+      const applyResult = (hit: ExtractResult) => {
+        setItems((prev) =>
+          prev.map((row) =>
+            row.id === hit.id
+              ? {
+                  ...row,
+                  srcChapter: hit.srcChapter,
+                  srcDesc: hit.srcDesc,
+                  zhChapter: hit.zhChapter,
+                  zhDesc: hit.zhDesc,
+                  page: hit.page,
+                  matchStatus: hit.matchStatus,
+                }
+              : row,
+          ),
+        );
+      };
+      const results = await extractItems(
+        [...selected],
+        (message) => {
+          setLogs((prev) => [...prev, message]);
+          setHint(message);
+        },
+        applyResult,
       );
+      results.forEach(applyResult);
       const matched = results.filter((r) => r.matchStatus === 'matched').length;
       const partial = results.filter((r) => r.matchStatus === 'partial').length;
       const unmatched = results.filter((r) => r.matchStatus === 'unmatched').length;
@@ -160,7 +168,7 @@ export default function App() {
           </div>
         </div>
         <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-          语料：HRV 4000 PBTS - Conformed 5-22-17（657 页）。右侧为源文件预览。
+          语料：HRV 4000 PBTS - Conformed 5-22-17（657 页）。右侧为源文件预览；点击已回填行可跳到对应页。
           建议先勾选少量行。流程：英译条目 → 召回标书 → 模型填写章节 / 原文 / 译文 / 页码。
         </div>
         <p className="mt-2 text-xs text-slate-600">{hint}</p>
@@ -204,7 +212,12 @@ export default function App() {
                 {displayItems.map((row, idx) => (
                   <tr
                     key={row.id}
-                    className={`align-top ${idx % 2 ? 'bg-slate-50' : 'bg-white'}`}
+                    className={`align-top ${idx % 2 ? 'bg-slate-50' : 'bg-white'} ${row.page ? 'cursor-pointer hover:bg-sky-50' : ''}`}
+                    onClick={() => {
+                      if (!row.page) return;
+                      setJumpToPage(row.page);
+                      setJumpNonce((n) => n + 1);
+                    }}
                   >
                     <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggle(row.id)} />
@@ -243,6 +256,8 @@ export default function App() {
           <div className="min-h-0 flex-1">
             <PdfViewer
               fileUrl={PDF_URL}
+              jumpToPage={jumpToPage}
+              jumpNonce={jumpNonce}
               onVisiblePage={(page, total) => {
                 setVisiblePage(page);
                 setPageTotal(total);
