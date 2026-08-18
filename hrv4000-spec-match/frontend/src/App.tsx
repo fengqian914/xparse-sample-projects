@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import PdfViewer from './PdfViewer';
-import { extractItems, fetchItems } from './api';
+import { API_BASE, extractItems, fetchItems } from './api';
 import type { ExtractResult, MatchStatus, RequirementItem } from './types';
 
-const PDF_URL = '/hrv4000-pbts.pdf';
+const PDF_URL = `${API_BASE}/api/document`;
 
 /** 解释较完整、适合演示的条目置顶，其余按序号 */
 const PINNED_IDS = [8, 10, 13, 14, 15, 18, 19, 27, 35, 66];

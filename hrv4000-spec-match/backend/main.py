@@ -60,7 +60,7 @@ async def list_items():
 async def document_file():
     if not PDF_PATH.exists():
         raise HTTPException(404, "PDF not found")
-    return FileResponse(PDF_PATH, media_type="application/pdf", filename="hrv4000-pbts.pdf")
+    return FileResponse(PDF_PATH, media_type="application/pdf")
 
 
 @app.post("/api/extract")

@@ -1,7 +1,9 @@
 import type { ExtractResult, RequirementItem } from './types';
 
+export const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '');
+
 export async function fetchItems(): Promise<RequirementItem[]> {
-  const res = await fetch('/api/items');
+  const res = await fetch(`${API_BASE}/api/items`);
   if (!res.ok) throw new Error('加载基准库失败');
   const data = await res.json();
   return data.items;
@@ -12,7 +14,7 @@ export async function extractItems(
   onLog: (message: string) => void,
   onRow?: (result: ExtractResult) => void,
 ): Promise<ExtractResult[]> {
-  const res = await fetch('/api/extract', {
+  const res = await fetch(`${API_BASE}/api/extract`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ item_ids: itemIds }),
